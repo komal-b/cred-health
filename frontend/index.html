@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Credo Health - Migrated Patients</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body { font-family: sans-serif; margin: 20px; }
+        input[type="text"] { padding: 6px 10px; width: 300px; margin-bottom: 16px; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
+        th { background: #f0f0f0; }
+        tr.patient-row { cursor: pointer; position: relative; }
+        tr.patient-row:hover { background: #f9f9f9; }
+        #status { color: #666; margin-bottom: 10px; }
+        .tooltip {
+            position: absolute;
+            background: #222;
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 13px;
+            z-index: 10;
+            max-width: 300px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <h1>Migrated Patients</h1>
+
+        <input
+            type="text"
+            v-model="searchQuery"
+            placeholder="Search by FHIR ID..."
+        />
+
+        <p id="status" v-if="status">{{ status }}</p>
+
+        <table v-if="filteredPatients.length > 0">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Gender</th>
+                    <th>DOB</th>
+                    <th>MRN</th>
+                    <th>FHIR ID</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr
+                    v-for="patient in filteredPatients"
+                    :key="patient.fhir_id"
+                    class="patient-row"
+                    @click="showObservations(patient)"
+                    @mouseenter="onHover(patient)"
+                    @mouseleave="hoveredPatient = null"
+                >
+                    <td>{{ patient.first_name }} {{ patient.last_name }}</td>
+                    <td>{{ patient.gender || '-' }}</td>
+                    <td>{{ patient.dob || '-' }}</td>
+                    <td>{{ patient.mrn || '-' }}</td>
+                    <td style="position: relative;">
+                        {{ patient.fhir_id }}
+                        <div v-if="hoveredPatient && hoveredPatient.fhir_id === patient.fhir_id" class="tooltip">
+                            <div v-if="hoverLoading">Loading...</div>
+                            <div v-else-if="hoverObservations.length === 0">No observations found. Click for details.</div>
+                            <div v-else>
+                                <div v-for="obs in hoverObservations.slice(0, 2)" :key="obs.id">
+                                    {{ obs.code_display || 'Unknown' }}: {{ obs.value || '-' }} {{ obs.unit || '' }}
+                                </div>
+                                <div v-if="hoverObservations.length > 2">... click to see more</div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    patients: [],
+                    searchQuery: "",
+                    status: "Loading patients...",
+                    observationsCache: {},
+                    hoveredPatient: null,
+                    hoverObservations: [],
+                    hoverLoading: false,
+                };
+            },
+            computed: {
+                filteredPatients() {
+                    if (!this.searchQuery.trim()) {
+                        return this.patients;
+                    }
+                    const query = this.searchQuery.trim().toLowerCase();
+                    return this.patients.filter(p =>
+                        p.fhir_id.toLowerCase().includes(query)
+                    );
+                }
+            },
+            methods: {
+                async loadPatients() {
+                    try {
+                        const response = await fetch("/api/patients");
+                        if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+                        const data = await response.json();
+
+                        this.patients = data.patients;
+                        this.status = this.patients.length === 0
+                            ? "No patients found. Run the migration first to populate the database."
+                            : "";
+                    } catch (err) {
+                        this.status = `Failed to load patients: ${err.message}. Is the backend running?`;
+                    }
+                },
+
+                async fetchObservationsFor(fhirId) {
+                    if (this.observationsCache[fhirId]) {
+                        return this.observationsCache[fhirId];
+                    }
+                    const response = await fetch(`/api/patients/${fhirId}`);
+                    if (!response.ok) throw new Error(`Server responded with ${response.status}`);
+                    const data = await response.json();
+                    this.observationsCache[fhirId] = data.observations;
+                    return data.observations;
+                },
+
+                async onHover(patient) {
+                    this.hoveredPatient = patient;
+                    this.hoverLoading = true;
+                    try {
+                        this.hoverObservations = await this.fetchObservationsFor(patient.fhir_id);
+                    } catch (err) {
+                        this.hoverObservations = [];
+                    } finally {
+                        this.hoverLoading = false;
+                    }
+                },
+
+                async showObservations(patient) {
+                    try {
+                        const observations = await this.fetchObservationsFor(patient.fhir_id);
+                        const name = `${patient.first_name || ""} ${patient.last_name || ""}`.trim();
+
+                        if (observations.length === 0) {
+                            alert(`${name}\n\nNo observation details found.`);
+                            return;
+                        }
+
+                        const lines = observations.map(o =>
+                            `${o.code_display || "Unknown"}: ${o.value || "-"} ${o.unit || ""}  (${o.effective_date || "no date"})`
+                        );
+                        alert(`${name} - Observations\n\n${lines.join("\n")}`);
+                    } catch (err) {
+                        alert(`Failed to load observations: ${err.message}`);
+                    }
+                }
+            },
+            mounted() {
+                this.loadPatients();
+            }
+        }).mount("#app");
+    </script>
+</body>
+</html>
