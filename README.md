@@ -26,6 +26,12 @@ That's it. This single command:
 3. Starts `backend` (Django REST API) once `migrate` completes successfully
 4. Starts `frontend` (nginx serving the Vue app, proxying `/api/` to `backend`)
 Once running, open **http://localhost:5173** in a browser.
+
+## Running Tests
+
+```bash
+docker compose run --rm backend python manage.py test patients
+```
  
 To re-run the migration fresh (clears previously migrated data):
 ```bash
